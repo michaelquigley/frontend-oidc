@@ -20,26 +20,19 @@ import (
 	"golang.org/x/oauth2"
 )
 
-var err error
-var cfg *frontend_oidc.OAuthConfig
-
-const callbackPath = "/auth/callback"
-
 func init() {
-	pfxlog.GlobalInit(slog.LevelInfo, pfxlog.DefaultOptions().SetTrimPrefix("git.hq.quigley.com/research/oidc"))
+	pfxlog.GlobalInit(slog.LevelInfo, pfxlog.DefaultOptions().SetTrimPrefix("github.com/michaelquigley/frontend-oidc/"))
 }
 
 func main() {
 	cfg, err := frontend_oidc.LoadConfig(os.Args[1])
 	if err != nil {
-		pfxlog.Error(err)
-		os.Exit(1)
+		panic(err)
 	}
 	if cfg.Oauth == nil {
 		pfxlog.Error("oauth config is empty")
 		os.Exit(1)
 	}
-
 	pfxlog.Info(cf.Dump(cfg, cf.DefaultOptions()))
 
 	secretsKey, err := frontend_oidc.DeriveKey(cfg.SecretsKey, 32)
@@ -48,6 +41,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	redirectUrl := fmt.Sprintf("%v%v", cfg.AppUrl, cfg.CallbackPath)
 	providerCfg := &oauth2.Config{
 		ClientID:     cfg.ClientId,
 		ClientSecret: cfg.ClientSecret,
@@ -55,20 +49,21 @@ func main() {
 			AuthURL:  cfg.Oauth.AuthUrl,
 			TokenURL: cfg.Oauth.TokenUrl,
 		},
-		RedirectURL: fmt.Sprintf("%v%v", cfg.AppUrl, callbackPath),
+		RedirectURL: redirectUrl,
 		Scopes:      cfg.Scopes,
 	}
 	cookieHandler := zhttp.NewCookieHandler(secretsKey, secretsKey, zhttp.WithUnsecure())
 	providerOptions := []rp.Option{
 		rp.WithCookieHandler(cookieHandler),
 		rp.WithVerifierOpts(rp.WithIssuedAtOffset(5 * time.Second)),
-		rp.WithPKCE(cookieHandler),
 		rp.WithSigningAlgsFromDiscovery(),
+	}
+	if cfg.Pkce {
+		providerOptions = append(providerOptions, rp.WithPKCE(cookieHandler))
 	}
 	provider, err := rp.NewRelyingPartyOAuth(providerCfg, providerOptions...)
 	if err != nil {
-		pfxlog.Error(err)
-		os.Exit(1)
+		panic(err)
 	}
 
 	state := func() string { return uuid.New().String() }
@@ -113,11 +108,10 @@ func main() {
 		w.Header().Set("content-type", "application/json")
 		w.Write(response)
 	}
-	http.Handle(callbackPath, rp.CodeExchangeHandler(codeExchangeHandler, provider))
+	http.Handle(cfg.CallbackPath, rp.CodeExchangeHandler(codeExchangeHandler, provider))
 
 	err = http.ListenAndServe(cfg.AppBindAddress, http.DefaultServeMux)
 	if err != nil {
-		pfxlog.Error(err)
-		os.Exit(1)
+		panic(err)
 	}
 }
