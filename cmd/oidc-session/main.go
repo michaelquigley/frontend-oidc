@@ -26,7 +26,7 @@ func init() {
 	pfxlog.GlobalInit(slog.LevelInfo, pfxlog.DefaultOptions().SetTrimPrefix("git.hq.quigley.com/research/"))
 }
 
-var cfg *Config
+var cfg *frontend_oidc.Config
 var provider rp.RelyingParty
 var secretsKey []byte
 
@@ -37,7 +37,7 @@ func main() {
 	}
 
 	var err error
-	cfg, err = LoadConfig(os.Args[1])
+	cfg, err = frontend_oidc.LoadConfig(os.Args[1])
 	if err != nil {
 		panic(err)
 	}
@@ -48,40 +48,37 @@ func main() {
 		panic(err)
 	}
 
-	redirectUri := fmt.Sprintf("%v%v", cfg.BaseUri, cfg.CallbackPath)
+	redirectUri := fmt.Sprintf("%v%v", cfg.AppUrl, cfg.CallbackPath)
 	cookieHandler := httphelper.NewCookieHandler([]byte(cfg.SigningKey), secretsKey, httphelper.WithUnsecure())
-
-	options := []rp.Option{
+	providerOptions := []rp.Option{
 		rp.WithCookieHandler(cookieHandler),
 		rp.WithVerifierOpts(rp.WithIssuedAtOffset(5 * time.Second)),
 		rp.WithLogger(pfxlog.Logger().Logger),
 		rp.WithSigningAlgsFromDiscovery(),
 	}
 	if cfg.Pkce {
-		options = append(options, rp.WithPKCE(cookieHandler))
+		providerOptions = append(providerOptions, rp.WithPKCE(cookieHandler))
 	}
-
 	provider, err = rp.NewRelyingPartyOIDC(
 		context.TODO(),
-		cfg.IssuerUrl,
+		cfg.OIDC.Issuer,
 		cfg.ClientId,
 		cfg.ClientSecret,
 		redirectUri,
 		cfg.Scopes,
-		options...,
+		providerOptions...,
 	)
 	if err != nil {
-		pfxlog.Errorf("failed to create relying party: %v", err)
-		os.Exit(1)
+		panic(err)
 	}
 
-	stateF := func() string { return uuid.New().String() }
+	state := func() string { return uuid.New().String() }
 	urlOptions := []rp.URLParamOpt{
 		rp.WithPromptURLParam("consent"),
 		rp.WithResponseModeURLParam("query"),
 		rp.WithURLParam("access_type", "offline"),
 	}
-	http.Handle("/login", rp.AuthURLHandler(stateF, provider, urlOptions...))
+	http.Handle("/login", rp.AuthURLHandler(state, provider, urlOptions...))
 
 	http.Handle(cfg.CallbackPath, rp.CodeExchangeHandler(rp.UserinfoCallback(loginCallback), provider))
 
@@ -99,7 +96,7 @@ func main() {
 		_, _ = w.Write([]byte("<html><a href=\"/login\">Login</a></html>"))
 	})
 
-	if err := http.ListenAndServe(fmt.Sprintf(":%v", cfg.Port), nil); !errors.Is(err, http.ErrServerClosed) {
+	if err := http.ListenAndServe(cfg.AppBindAddress, nil); !errors.Is(err, http.ErrServerClosed) {
 		pfxlog.Errorf("error: %v", err)
 		os.Exit(1)
 	}
@@ -202,7 +199,7 @@ func validateSession(w http.ResponseWriter, r *http.Request, provider rp.Relying
 		http.SetCookie(w, &http.Cookie{
 			Name:     cookieName,
 			Value:    signedJwt,
-			MaxAge:   cfg.CookieMaxAge,
+			MaxAge:   int(cfg.CookieExpires.Seconds()),
 			Domain:   cfg.CookieDomain,
 			Path:     "/",
 			Expires:  time.Now().Add(cfg.CookieExpires),
@@ -247,7 +244,7 @@ func loginCallback(w http.ResponseWriter, r *http.Request, tokens *oidc.Tokens[*
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    signedJwt,
-		MaxAge:   cfg.CookieMaxAge,
+		MaxAge:   int(cfg.CookieExpires.Seconds()),
 		Domain:   cfg.CookieDomain,
 		Path:     "/",
 		Expires:  time.Now().Add(cfg.CookieExpires),
@@ -298,7 +295,7 @@ func logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if endSessionUrl, err := rp.EndSession(context.TODO(), provider, refreshToken, fmt.Sprintf("%v/nologin", cfg.BaseUri), ""); err == nil {
+	if endSessionUrl, err := rp.EndSession(context.TODO(), provider, refreshToken, fmt.Sprintf("%v/nologin", cfg.AppUrl), ""); err == nil {
 		pfxlog.Infof("redirecting to end session url: %v", endSessionUrl)
 		http.Redirect(w, r, endSessionUrl.String(), http.StatusFound)
 	} else {
