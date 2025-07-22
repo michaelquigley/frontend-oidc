@@ -42,6 +42,12 @@ func main() {
 
 	pfxlog.Info(cf.Dump(cfg, cf.DefaultOptions()))
 
+	secretsKey, err := frontend_oidc.DeriveKey(cfg.SecretsKey, 32)
+	if err != nil {
+		pfxlog.Error(err)
+		os.Exit(1)
+	}
+
 	providerCfg := &oauth2.Config{
 		ClientID:     cfg.ClientId,
 		ClientSecret: cfg.ClientSecret,
@@ -52,7 +58,7 @@ func main() {
 		RedirectURL: fmt.Sprintf("%v%v", cfg.AppUrl, callbackPath),
 		Scopes:      cfg.Scopes,
 	}
-	cookieHandler := zhttp.NewCookieHandler([]byte(cfg.SecretsKey), []byte(cfg.SecretsKey), zhttp.WithUnsecure())
+	cookieHandler := zhttp.NewCookieHandler(secretsKey, secretsKey, zhttp.WithUnsecure())
 	providerOptions := []rp.Option{
 		rp.WithCookieHandler(cookieHandler),
 		rp.WithVerifierOpts(rp.WithIssuedAtOffset(5 * time.Second)),

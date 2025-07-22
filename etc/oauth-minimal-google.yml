@@ -1,5 +1,5 @@
-app_url:              "http://google.zrok.quigley.com:8082"
-app_bind_address:     ":8082"
+app_url:              "http://google.zrok.quigley.com:8080"
+app_bind_address:     ":8080"
 cookie_domain:        "google.zrok.quigley.com"
 scopes:
   - openid

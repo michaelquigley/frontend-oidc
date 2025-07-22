@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,11 +13,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/michaelquigley/cf"
+	frontend_oidc "github.com/michaelquigley/frontend-oidc"
 	"github.com/michaelquigley/pfxlog"
 	"github.com/zitadel/oidc/v3/pkg/client/rp"
 	httphelper "github.com/zitadel/oidc/v3/pkg/http"
 	"github.com/zitadel/oidc/v3/pkg/oidc"
-	"golang.org/x/crypto/hkdf"
 )
 
 const cookieName = "oidc-session"
@@ -29,6 +28,7 @@ func init() {
 
 var cfg *Config
 var provider rp.RelyingParty
+var secretsKey []byte
 
 func main() {
 	if len(os.Args) != 2 {
@@ -43,8 +43,13 @@ func main() {
 	}
 	fmt.Println(cf.Dump(cfg, cf.DefaultOptions()))
 
+	secretsKey, err = frontend_oidc.DeriveKey(cfg.SecretsKey, 32)
+	if err != nil {
+		panic(err)
+	}
+
 	redirectUri := fmt.Sprintf("%v%v", cfg.BaseUri, cfg.CallbackPath)
-	cookieHandler := httphelper.NewCookieHandler([]byte(cfg.SigningKey), []byte(deriveEncryptionKey(cfg.SecretsKey)), httphelper.WithUnsecure())
+	cookieHandler := httphelper.NewCookieHandler([]byte(cfg.SigningKey), secretsKey, httphelper.WithUnsecure())
 
 	options := []rp.Option{
 		rp.WithCookieHandler(cookieHandler),
@@ -101,12 +106,11 @@ func main() {
 }
 
 func encryptRefreshToken(token string) (string, error) {
-	encryptionKey := deriveEncryptionKey(cfg.SecretsKey)
 	enc, err := jose.NewEncrypter(
 		jose.A256GCM,
 		jose.Recipient{
 			Algorithm: jose.DIRECT,
-			Key:       encryptionKey,
+			Key:       secretsKey,
 		},
 		nil,
 	)
@@ -128,8 +132,7 @@ func decryptRefreshToken(encrypted string) (string, error) {
 		return "", fmt.Errorf("failed to parse encrypted token: %v", err)
 	}
 
-	encryptionKey := deriveEncryptionKey(cfg.SecretsKey)
-	decrypted, err := obj.Decrypt(encryptionKey)
+	decrypted, err := obj.Decrypt(secretsKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt token: %v", err)
 	}
@@ -302,17 +305,6 @@ func logout(w http.ResponseWriter, r *http.Request) {
 		pfxlog.Warnf("no end session url (%v); redirecting", err)
 		http.Redirect(w, r, "/nologin", http.StatusFound)
 	}
-}
-
-func deriveEncryptionKey(keyString string) []byte {
-	// use HKDF to derive a 32-byte key from the config key
-	hkdf := hkdf.New(sha256.New, []byte(keyString), nil, []byte("oidc-session-encryption"))
-	key := make([]byte, 32) // 32 bytes for A256GCM
-	_, err := hkdf.Read(key)
-	if err != nil {
-		panic(fmt.Sprintf("failed to derive encryption key: %v", err))
-	}
-	return key
 }
 
 type oidcSessionClaims struct {
