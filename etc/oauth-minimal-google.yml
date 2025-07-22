@@ -1,10 +1,12 @@
-base_url:             "http://google.zrok.quigley.com:8080"
-port:                 8080
+app_url:              "http://google.zrok.quigley.com:8082"
+app_bind_address:     ":8082"
 cookie_domain:        "google.zrok.quigley.com"
-auth_url:             "https://accounts.google.com/o/oauth2/v2/auth"
-token_url:            "https://oauth2.googleapis.com/token"
-userinfo_url:         "https://www.googleapis.com/oauth2/v2/userinfo"
 scopes:
   - openid
   - email
   - profile
+
+oauth:
+  auth_url: "https://accounts.google.com/o/oauth2/v2/auth"
+  token_url: "https://oauth2.googleapis.com/token"
+  userinfo_url: "https://www.googleapis.com/oauth2/v2/userinfo"

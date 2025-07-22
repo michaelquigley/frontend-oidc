@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/michaelquigley/cf"
+	frontend_oidc "github.com/michaelquigley/frontend-oidc"
 	"github.com/michaelquigley/pfxlog"
 	"github.com/sirupsen/logrus"
 	"github.com/zitadel/oidc/v3/pkg/client/rp"
@@ -20,7 +21,7 @@ import (
 )
 
 var err error
-var cfg *Config
+var cfg *frontend_oidc.OAuthConfig
 
 const callbackPath = "/auth/callback"
 
@@ -29,9 +30,13 @@ func init() {
 }
 
 func main() {
-	cfg, err = LoadConfig(os.Args[1])
+	cfg, err := frontend_oidc.LoadConfig(os.Args[1])
 	if err != nil {
 		pfxlog.Error(err)
+		os.Exit(1)
+	}
+	if cfg.Oauth == nil {
+		pfxlog.Error("oauth config is empty")
 		os.Exit(1)
 	}
 
@@ -41,10 +46,10 @@ func main() {
 		ClientID:     cfg.ClientId,
 		ClientSecret: cfg.ClientSecret,
 		Endpoint: oauth2.Endpoint{
-			AuthURL:  cfg.AuthUrl,
-			TokenURL: cfg.TokenUrl,
+			AuthURL:  cfg.Oauth.AuthUrl,
+			TokenURL: cfg.Oauth.TokenUrl,
 		},
-		RedirectURL: fmt.Sprintf("%v%v", cfg.BaseUrl, callbackPath),
+		RedirectURL: fmt.Sprintf("%v%v", cfg.AppUrl, callbackPath),
 		Scopes:      cfg.Scopes,
 	}
 	cookieHandler := zhttp.NewCookieHandler([]byte(cfg.SecretsKey), []byte(cfg.SecretsKey), zhttp.WithUnsecure())
@@ -71,7 +76,7 @@ func main() {
 	codeExchangeHandler := func(w http.ResponseWriter, r *http.Request, tokens *oidc.Tokens[*oidc.IDTokenClaims], state string, rp rp.RelyingParty) {
 		pfxlog.Logger().With("accessToken", tokens.AccessToken, "refreshToken", tokens.RefreshToken, "idToken", tokens.IDToken).Warn("received tokens")
 
-		parsedUrl, err := url.Parse(cfg.UserinfoUrl)
+		parsedUrl, err := url.Parse(cfg.Oauth.UserinfoUrl)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -104,7 +109,7 @@ func main() {
 	}
 	http.Handle(callbackPath, rp.CodeExchangeHandler(codeExchangeHandler, provider))
 
-	err = http.ListenAndServe(fmt.Sprintf(":%v", cfg.Port), http.DefaultServeMux)
+	err = http.ListenAndServe(cfg.AppBindAddress, http.DefaultServeMux)
 	if err != nil {
 		pfxlog.Error(err)
 		os.Exit(1)
