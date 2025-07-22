@@ -1,11 +1,15 @@
 app_url:              "http://google.zrok.quigley.com:8080"
 app_bind_address:     ":8080"
 cookie_domain:        "google.zrok.quigley.com"
+cookie_expires:       "24h"
+refresh_every:        "10m"
+before_expiry:        "5m"
 callback_path:        "/auth/callback"
 scopes:
   - openid
   - email
   - profile
+pkce:                 true
 
 oauth:
   auth_url:           "https://accounts.google.com/o/oauth2/v2/auth"

@@ -1,0 +1,15 @@
+app_url:              "http://github.zrok.quigley.com:8081"
+app_bind_address:     ":8081"
+cookie_domain:        "github.zrok.quigley.com"
+cookie_expires:       "24h"
+refresh_every:        "10m"
+before_expiry:        "5m"
+callback_path:        "/auth/callback"
+scopes:
+  - user:email
+pkce:                 true
+
+oauth:
+  auth_url:           "https://github.com/login/oauth/authorize"
+  token_url:          "https://github.com/login/oauth/access_token"
+  userinfo_url:       "https://api.github.com/user/emails"

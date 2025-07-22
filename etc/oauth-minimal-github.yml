@@ -1,8 +1,0 @@
-base_url:             "http://github.zrok.quigley.com:8081"
-port:                 8081
-cookie_domain:        "github.zrok.quigley.com"
-auth_url:             "https://github.com/login/oauth/authorize"
-token_url:            "https://github.com/login/oauth/access_token"
-userinfo_url:         "https://api.github.com/user/emails"
-scopes:
-  - user:email
