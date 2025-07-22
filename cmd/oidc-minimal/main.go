@@ -1,0 +1,155 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
+
+	"github.com/zitadel/logging"
+	"github.com/zitadel/oidc/v3/pkg/client/rp"
+	httphelper "github.com/zitadel/oidc/v3/pkg/http"
+	"github.com/zitadel/oidc/v3/pkg/oidc"
+)
+
+var (
+	callbackPath = "/auth/callback"
+	key          = []byte("test1234test1234")
+)
+
+// inspired by: https://github.com/zitadel/oidc/blob/main/example/client/app/app.go
+
+func main() {
+	clientID := os.Getenv("CLIENT_ID")
+	clientSecret := os.Getenv("CLIENT_SECRET")
+	keyPath := os.Getenv("KEY_PATH")
+	issuer := os.Getenv("ISSUER")
+	port := os.Getenv("PORT")
+	scopes := strings.Split(os.Getenv("SCOPES"), " ")
+	responseMode := os.Getenv("RESPONSE_MODE")
+
+	var pkce bool
+	if pkceEnv, ok := os.LookupEnv("PKCE"); ok {
+		var err error
+		pkce, err = strconv.ParseBool(pkceEnv)
+		if err != nil {
+			logrus.Fatalf("error parsing PKCE %s", err.Error())
+		}
+	}
+	redirectURI := fmt.Sprintf("http://localhost:%v%v", port, callbackPath)
+	cookieHandler := httphelper.NewCookieHandler(key, key, httphelper.WithUnsecure())
+
+	logger := slog.New(
+		slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			AddSource: true,
+			Level:     slog.LevelDebug,
+		}),
+	)
+	client := &http.Client{
+		Timeout: time.Minute,
+	}
+	// enable outgoing request logging
+	logging.EnableHTTPClient(client,
+		logging.WithClientGroup("client"),
+	)
+
+	options := []rp.Option{
+		rp.WithCookieHandler(cookieHandler),
+		rp.WithVerifierOpts(rp.WithIssuedAtOffset(5 * time.Second)),
+		rp.WithHTTPClient(client),
+		rp.WithLogger(logger),
+		rp.WithSigningAlgsFromDiscovery(),
+	}
+	if clientSecret == "" {
+		options = append(options, rp.WithPKCE(cookieHandler))
+	}
+	if keyPath != "" {
+		options = append(options, rp.WithJWTProfile(rp.SignerFromKeyPath(keyPath)))
+	}
+	if pkce {
+		options = append(options, rp.WithPKCE(cookieHandler))
+	}
+
+	// One can add a logger to the context,
+	// pre-defining log attributes as required.
+	ctx := logging.ToContext(context.TODO(), logger)
+	provider, err := rp.NewRelyingPartyOIDC(ctx, issuer, clientID, clientSecret, redirectURI, scopes, options...)
+	if err != nil {
+		logrus.Fatalf("error creating provider %s", err.Error())
+	}
+
+	// generate some state (representing the state of the user in your application,
+	// e.g. the page where he was before sending him to login
+	state := func() string {
+		return uuid.New().String()
+	}
+
+	urlOptions := []rp.URLParamOpt{rp.WithPromptURLParam("consent")}
+
+	if responseMode != "" {
+		urlOptions = append(urlOptions, rp.WithResponseModeURLParam(oidc.ResponseMode(responseMode)))
+	}
+
+	// register the AuthURLHandler at your preferred path.
+	// the AuthURLHandler creates the auth request and redirects the user to the auth server.
+	// including state handling with secure cookie and the possibility to use PKCE.
+	// Prompts can optionally be set to inform the server of
+	// any messages that need to be prompted back to the user.
+	http.Handle("/login", rp.AuthURLHandler(
+		state,
+		provider,
+		urlOptions...,
+	))
+
+	// for demonstration purposes the returned userinfo response is written as JSON object onto response
+	marshalUserinfo := func(w http.ResponseWriter, r *http.Request, tokens *oidc.Tokens[*oidc.IDTokenClaims], state string, rp rp.RelyingParty, info *oidc.UserInfo) {
+		fmt.Println("access token", tokens.AccessToken)
+		fmt.Println("refresh token", tokens.RefreshToken)
+		fmt.Println("id token", tokens.IDToken)
+
+		data, err := json.Marshal(info)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		w.Write(data)
+	}
+
+	// register the CodeExchangeHandler at the callbackPath
+	// the CodeExchangeHandler handles the auth response, creates the token request and calls the callback function
+	// with the returned tokens from the token endpoint
+	// in this example the callback function itself is wrapped by the UserinfoCallback which
+	// will call the Userinfo endpoint, check the sub and pass the info into the callback function
+	http.Handle(callbackPath, rp.CodeExchangeHandler(rp.UserinfoCallback(marshalUserinfo), provider))
+
+	// if you would use the callback without calling the userinfo endpoint, simply switch the callback handler for:
+	//
+	// http.Handle(callbackPath, rp.CodeExchangeHandler(marshalToken, provider))
+
+	// simple counter for request IDs
+	var counter atomic.Int64
+	// enable incoming request logging
+	mw := logging.Middleware(
+		logging.WithLogger(logger),
+		logging.WithGroup("server"),
+		logging.WithIDFunc(func() slog.Attr { return slog.Int64("id", counter.Add(1)) }),
+	)
+
+	lis := fmt.Sprintf("127.0.0.1:%s", port)
+	logger.Info("server listening, press ctrl+c to stop", "addr", lis)
+	err = http.ListenAndServe(lis, mw(http.DefaultServeMux))
+	if err != http.ErrServerClosed {
+		logger.Error("server terminated", "error", err)
+		os.Exit(1)
+	}
+}
