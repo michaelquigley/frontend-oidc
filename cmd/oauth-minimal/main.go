@@ -25,6 +25,11 @@ func init() {
 }
 
 func main() {
+	if len(os.Args) != 2 {
+		fmt.Println("Usage: oauth-minimal <configPath>")
+		os.Exit(1)
+	}
+
 	cfg, err := frontend_oidc.LoadConfig(os.Args[1])
 	if err != nil {
 		panic(err)

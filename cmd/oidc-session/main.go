@@ -41,6 +41,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	if cfg.OIDC == nil {
+		pfxlog.Error("oidc config is empty")
+		os.Exit(1)
+	}
 	fmt.Println(cf.Dump(cfg, cf.DefaultOptions()))
 
 	secretsKey, err = frontend_oidc.DeriveKey(cfg.SecretsKey, 32)
