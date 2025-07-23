@@ -23,7 +23,7 @@ import (
 const cookieName = "oidc-session"
 
 func init() {
-	pfxlog.GlobalInit(slog.LevelInfo, pfxlog.DefaultOptions().SetTrimPrefix("git.hq.quigley.com/research/"))
+	pfxlog.GlobalInit(slog.LevelInfo, pfxlog.DefaultOptions().SetTrimPrefix("github.com/michaelquigley/frontend-oidc/"))
 }
 
 var cfg *frontend_oidc.Config
